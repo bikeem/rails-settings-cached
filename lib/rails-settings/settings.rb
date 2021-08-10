@@ -109,7 +109,7 @@ module RailsSettings
         thing_scoped.where(var: var_name.to_s).first
       end
 
-      def thing_scoped
+      def thing_null_scoped
         unscoped.where('thing_type is NULL and thing_id is NULL')
       end
 
