@@ -22,14 +22,19 @@ module RailsSettings
         method_name = method.to_s
         super(method, *args)
       rescue NoMethodError
+        arg = args[0] if args[0].respond_to?(:id)
         # set a value for a variable
         if method_name[-1] == '='
           var_name = method_name.sub('=', '')
           value = args.first
-          self[var_name] = value
+          if arg
+            self[var_name, value] = arg
+          else
+            self[var_name] = value
+          end
         else
           # retrieve a value
-          self[method_name]
+          arg ? self[method_name, arg] : self[method_name]
         end
       end
 
@@ -69,8 +74,8 @@ module RailsSettings
       end
 
       # get a setting value by [] notation
-      def [](var_name)
-        if var = object(var_name)
+      def [](var_name, object)
+        if var = object(var_name, object)
           val = var.value
         elsif Default.enabled?
           val = Default[var_name]
@@ -81,10 +86,10 @@ module RailsSettings
       end
 
       # set a setting value by [] notation
-      def []=(var_name, value)
+      def []=(var_name, value, object)
         var_name = var_name.to_s
 
-        record = object(var_name) || thing_scoped.new(var: var_name)
+        record = object(var_name, object) || thing_scoped.new(var: var_name)
         record.value = value
         record.save!
 
@@ -103,14 +108,18 @@ module RailsSettings
         new_value
       end
 
-      def object(var_name)
+      def object(var_name, object)
         return nil unless rails_initialized?
         return nil unless table_exists?
-        thing_scoped.where(var: var_name.to_s).first
+        new_thing_scoped(object).where(var: var_name.to_s).first
       end
 
       def thing_scoped
         unscoped.where('thing_type is NULL and thing_id is NULL')
+      end
+
+      def new_thing_scoped(object)
+        object ? unscoped.where(thing_type: object.class.base_class.to_s, thing_id: object.id) : unscoped
       end
 
       def source(filename)

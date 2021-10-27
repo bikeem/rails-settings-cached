@@ -31,20 +31,22 @@ module RailsSettings
         scope.join('/')
       end
 
-      def [](key)
+      def [](key, object = nil)
         settings_key = scoped_key(key)
-        return super(settings_key) unless rails_initialized?
-        val = Rails.cache.fetch(cache_key(settings_key, @object)) do
-          super(settings_key)
+        object ||= @object
+        return super(settings_key, object) unless rails_initialized?
+        val = Rails.cache.fetch(cache_key(settings_key, object)) do
+          super(settings_key, object)
         end
         val
       end
 
       # set a setting value by [] notation
-      def []=(var_name, value)
+      def []=(var_name, value, object = nil)
         settings_key = scoped_key(var_name)
-        super(settings_key, value)
-        Rails.cache.write(cache_key(settings_key, @object), value)
+        object ||= @object
+        super(settings_key, value, object)
+        Rails.cache.write(cache_key(settings_key, object), value)
         value
       end
 
