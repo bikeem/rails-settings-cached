@@ -45,29 +45,26 @@ describe RailsSettings::CachedSettings do
     it 'should set a key and fetch with one query' do
       expect(Setting.test_cache).to eq(nil)
       Setting.test_cache = 123
-      queries_count = count_queries do
-        expect(Setting.test_cache).to eq(123)
-        expect(Setting.test_cache).to eq(123)
-        expect(Setting.test_cache).to eq(123)
-      end
-      expect(queries_count).to eq(0)
+
+      # A write invalidates the key rather than publishing to it, so the first read afterwards
+      # costs one query and every read after that is free.
+      first = count_setting_queries { expect(Setting.test_cache).to eq(123) }
+      rest  = count_setting_queries { 2.times { expect(Setting.test_cache).to eq(123) } }
+      expect([first, rest]).to eq([1, 0])
+
       Setting.test_cache = 321
       expect(Setting.test_cache).to eq(321)
     end
   end
 
   it 'caches unscoped settings' do
-    queries_count = count_queries do
-      expect(described_class['gender']).to be nil
-      described_class['gender'] = 'female'
+    expect(described_class['gender']).to be nil
+    described_class['gender'] = 'female'
 
-      # Call 4 times, make sure value is cached by fact number of queries does not go up.
-      expect(described_class['gender']).to eq('female')
-      expect(described_class['gender']).to eq('female')
-      expect(described_class['gender']).to eq('female')
-      expect(described_class['gender']).to eq('female')
-    end
-    expect(queries_count).to eq(5)
+    # One query to repopulate after the write invalidated the key, then nothing.
+    first = count_setting_queries { expect(described_class['gender']).to eq('female') }
+    rest  = count_setting_queries { 3.times { expect(described_class['gender']).to eq('female') } }
+    expect([first, rest]).to eq([1, 0])
   end
 
   it 'caches unscoped settings' do
@@ -83,32 +80,33 @@ describe RailsSettings::CachedSettings do
   it 'caches scoped settings' do
     user = User.create!(login: 'another_test', password: 'foobar')
 
-    queries_count = count_queries do
-      expect(user.settings['gender']).to be nil
-      user.settings['gender'] = 'male'
-      expect(user.settings['gender']).to eq('male')
-      expect(user.settings['gender']).to eq('male')
-    end
-    expect(queries_count).to eq(6)
+    expect(user.settings['gender']).to be nil
+    user.settings['gender'] = 'male'
+
+    first = count_setting_queries { expect(user.settings['gender']).to eq('male') }
+    rest  = count_setting_queries { expect(user.settings['gender']).to eq('male') }
+    expect([first, rest]).to eq([1, 0])
   end
 
-  it 'caches scoped settings in transaction' do
+  it 'caches scoped settings after the transaction commits, not during it' do
     user = User.create!(login: 'another_test2', password: 'foobar')
+    expect(user.settings['gender']).to be nil   # cold read caches nil; the write below must clear it
 
-    queries_count = count_queries do
-      expect(user.settings['gender']).to be nil
-      ActiveRecord::Base.transaction do
-        user.settings['gender'] = 'male'
-        expect(user.settings['gender']).to eq('male')
-      end
+    ActiveRecord::Base.transaction do
+      user.settings['gender'] = 'male'
 
-      # Call 4 times, make sure value is cached by fact number of queries does not go up.
-      expect(user.settings['gender']).to eq('male')
-      expect(user.settings['gender']).to eq('male')
-      expect(user.settings['gender']).to eq('male')
-      expect(user.settings['gender']).to eq('male')
+      # A read inside an open transaction deliberately neither uses nor populates the cache: the
+      # value can still be rolled back and these keys have no TTL. Before this fix []= wrote the
+      # cache before commit -- the D2 bug -- which made this read a free cache hit and left the
+      # rolled-back value cached fleet-wide. cache_transaction_spec.rb pins the safety property.
+      reads = count_setting_queries { expect(user.settings['gender']).to eq('male') }
+      expect(reads).to eq(1)
     end
-    expect(queries_count).to eq(6)
+
+    # After commit the key was invalidated, so the first read repopulates and the rest are free.
+    first = count_setting_queries { expect(user.settings['gender']).to eq('male') }
+    rest  = count_setting_queries { 3.times { expect(user.settings['gender']).to eq('male') } }
+    expect([first, rest]).to eq([1, 0])
   end
 
   it 'caches values from db' do

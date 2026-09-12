@@ -7,3 +7,5 @@ vendor/
 pkg/
 coverage/
 
+spec/tmp/
+gemfiles/*.lock

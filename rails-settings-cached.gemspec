@@ -10,7 +10,7 @@ Gem::Specification.new do |s|
   s.homepage      = 'https://github.com/huacnlee/rails-settings-cached'
   s.require_paths = ['lib']
 
-  s.required_ruby_version = '>= 2.1'
+  s.required_ruby_version = '>= 3.3'
   s.summary = "Settings plugin for Rails that makes managing a table of global keys."
   s.description = """
   This is improved from rails-settings, added caching.
@@ -22,5 +22,5 @@ Gem::Specification.new do |s|
   You can store any kind of object.  Strings, numbers, arrays, or any object.
   """
 
-  s.add_dependency 'rails', '>= 4.2.0'
+  s.add_dependency 'rails', '>= 7.2'
 end

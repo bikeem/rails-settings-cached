@@ -1,3 +1,5 @@
+require_relative 'rails-settings/configuration'
+require_relative 'rails-settings/execution_state'
 require_relative 'rails-settings/settings'
 require_relative 'rails-settings/base'
 require_relative 'rails-settings/cached_settings'

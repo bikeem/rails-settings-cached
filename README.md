@@ -9,7 +9,7 @@ of object. Strings, numbers, arrays, or any object.
 
 ## Status
 
-[![Gem Version](https://badge.fury.io/rb/rails-settings-cached.svg)](https://rubygems.org/gems/rails-settings-cached) [![CI Status](https://travis-ci.org/huacnlee/rails-settings-cached.svg)](http://travis-ci.org/huacnlee/rails-settings-cached) [![Code Climate](https://codeclimate.com/github/huacnlee/rails-settings-cached/badges/gpa.svg)](https://codeclimate.com/github/huacnlee/rails-settings-cached) [![codecov.io](https://codecov.io/github/huacnlee/rails-settings-cached/coverage.svg?branch=master)](https://codecov.io/github/huacnlee/rails-settings-cached?branch=master)
+![CI](https://github.com/energyx/rails-settings-cached/actions/workflows/ci.yml/badge.svg)
 
 ## Setup
 
@@ -89,7 +89,16 @@ Setting.all('preferences.')
 ## Extend a model
 
 Settings may be bound to any existing ActiveRecord object. Define this association like this:
-Notice! is not do caching in this version.
+
+`record.settings` returns the `RailsSettings::ScopedSettings` class with the record bound for the
+current thread (or fiber, if `config.active_support.isolation_level = :fiber`). Chain the call --
+`user.settings.color` -- rather than holding the return value across another record's `settings`
+call on the same thread -- a held handle is silently rebound by the next `settings` call, so
+`s = a.settings; b.settings.x; s.y` reads and writes **b**, not a. The binding is cleared when the
+Rails executor completes the request or job; using it with no binding raises `MissingScope`.
+
+If the model defines `settings_scope` (e.g. returning `'partner'`), keys are stored as
+`partner.<key>` and defaults are looked up under that nesting in `config/app.yml`.
 
 ```ruby
 class User < ActiveRecord::Base
@@ -122,6 +131,51 @@ User.without_settings
 User.without_settings('color')
 # returns a scope of users having no 'color' setting (means user.settings.color == nil)
 ```
+
+## Caching and transactions
+
+Reads outside a transaction are cached (`Rails.cache.fetch`); **writes invalidate** rather than
+publish, and the next read repopulates. Publishing on commit would be unsafe: Rails runs commit
+callbacks on only one instance per record, so two writes to one key in a transaction could leave
+the first value cached forever.
+
+Entries expire after `RailsSettings.config.cache_expires_in` (12 hours by default; set it to `nil`
+to keep them forever). A reader descheduled between its database read and its cache write can
+publish a stale value after a writer invalidated the key -- no invalidation scheme closes that
+race, so the TTL bounds it.
+
+Writes that bypass ActiveRecord callbacks -- `update_column`, `update_all`, `delete_all`,
+`insert_all`, raw SQL -- cannot be seen by the gem and leave a stale entry until it expires.
+
+While **any** transaction is open -- joinable or not, and that includes every connection under
+`rails console --sandbox` -- the shared cache is read but never written: an uncommitted value
+cached fleet-wide would never expire. Reads are memoised per transaction instead, so a loop costs
+one query rather than one per iteration, and the memo is discarded with the transaction.
+
+The cost: a key that is only ever read *inside* a transaction (from a `before_save` callback, say)
+is never warmed, so it costs one query per transaction. Read it once at top level -- during boot,
+or anywhere outside a transaction -- and every later in-transaction read is served from the cache.
+
+## YAML decoding
+
+Values are decoded with `YAML.safe_load`. The allow-list defaults to
+`ActiveRecord.yaml_column_permitted_classes` plus `Symbol, Time, Date, ActiveSupport::HashWithIndifferentAccess`,
+and `RailsSettings.config.yaml_unsafe_load` follows `ActiveRecord.use_yaml_unsafe_load`. Override in an initializer:
+
+```ruby
+RailsSettings.configure do |c|
+  c.yaml_permitted_classes = c.yaml_permitted_classes + [BigDecimal]
+  # c.yaml_unsafe_load = true
+  # c.cache_expires_in = nil
+end
+```
+
+A value whose class is not permitted is rejected when it is **written**, with an `ArgumentError`
+naming the class -- rather than being stored and then failing every later read.
+
+## Requirements
+
+Ruby >= 3.3 and Rails >= 7.2 (tested on 7.2, 8.0, 8.1).
 
 ## Default settings
 

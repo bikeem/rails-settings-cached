@@ -4,38 +4,47 @@ module RailsSettings
 
     class SettingNotFound < RuntimeError; end
 
-    belongs_to :thing, polymorphic: true
+    belongs_to :thing, polymorphic: true, optional: true
 
     # get the value field, YAML decoded
     def value
-      YAML.load(self[:value], aliases: true, permitted_classes: [Time, Symbol]) if self[:value].present?
+      RailsSettings::YAMLCoder.load(self[:value]) if self[:value].present?
     end
 
     # set the value field, YAML encoded
     def value=(new_value)
-      self[:value] = new_value.to_yaml
+      encoded = new_value.to_yaml
+      # Fail here rather than on every future read: an un-decodable row breaks get_all for
+      # everyone, permanently, and gives no clue which call site wrote it.
+      RailsSettings::YAMLCoder.load(encoded)
+      self[:value] = encoded
+    rescue Psych::DisallowedClass => e
+      raise ArgumentError,
+            "#{self.class} cannot store a value of type #{new_value.class}: it would not decode again " \
+            "(#{e.message}). " \
+            'Add the class to RailsSettings.config.yaml_permitted_classes if this is intended.'
     end
 
     class << self
       # get or set a variable with the variable as the called method
-      def method_missing(method, *args)
+      def method_missing(method, *args, **kwargs, &block)
         method_name = method.to_s
-        super(method, *args)
+        super(method, *args, **kwargs, &block)
       rescue NoMethodError
-        arg = args[0] if args[0].respond_to?(:id)
+        scope_object = args[0] if args[0].is_a?(ActiveRecord::Base)
 
         # set a value for a variable
         if method_name[-1] == '='
           var_name = method_name.sub('=', '')
           value = args.first
-          if arg
-            self[var_name, value] = arg
+          if scope_object
+            self[var_name, value] = scope_object
           else
             self[var_name] = value
           end
         else
           # retrieve a value
-          arg ? self[method_name, arg] : self[method_name]
+          scope_object ? self[method_name, scope_object] : self[method_name]
         end
       end
 
@@ -52,7 +61,9 @@ module RailsSettings
       # retrieve all settings as a hash (optionally starting with a given namespace)
       def get_all(starting_with = nil)
         vars = thing_scoped.select('var, value')
-        vars = vars.where("var LIKE '#{starting_with}%'") if starting_with
+        # '!' rather than the default backslash: MySQL treats backslashes inside string literals
+        # as escapes, which makes ESCAPE '\' a syntax error there.
+        vars = vars.where("var LIKE ? ESCAPE '!'", "#{sanitize_sql_like(starting_with.to_s, '!')}%") if starting_with
 
         result = {}
         vars.each do |record|
@@ -61,7 +72,7 @@ module RailsSettings
 
         defaults = {}
         if Default.enabled?
-          defaults = starting_with.nil? ? Default.instance : Default.instance.select { |key, _| key.to_s.start_with?(starting_with) }
+          defaults = starting_with.nil? ? Default.instance : Default.instance.select { |key, _| key.to_s.start_with?(starting_with.to_s) }
         end
 
         result.reverse_merge! defaults
@@ -90,7 +101,10 @@ module RailsSettings
       def []=(var_name, value, object)
         var_name = var_name.to_s
 
-        record = object(var_name, object) || thing_scoped.new(var: var_name)
+        record = object(var_name, object)
+        # An explicit object binds the new row to it; without one keep the receiver's own scope
+        # (never `new_thing_scoped(nil)`, which is `unscoped` and would create a global row).
+        record ||= object ? new_thing_scoped(object).new(var: var_name) : thing_scoped.new(var: var_name)
         record.value = value
         record.save!
 
@@ -127,9 +141,13 @@ module RailsSettings
         unscoped.where('thing_type is NULL and thing_id is NULL')
       end
 
+      private
+
       def new_thing_scoped(object)
         object ? unscoped.where(thing_type: object.class.base_class.to_s, thing_id: object.id) : unscoped
       end
+
+      public
 
       def source(filename)
         Default.source(filename)

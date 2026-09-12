@@ -4,26 +4,26 @@ module RailsSettings
 
     included do
       scope :with_settings, lambda {
-        joins("JOIN settings ON (settings.thing_id = #{table_name}.#{primary_key} AND
-                                 settings.thing_type = '#{base_class.name}')")
-          .select("DISTINCT #{table_name}.*")
+        st = RailsSettings::Settings.quoted_table_name
+        joins(sanitize_sql_array(["JOIN #{st} ON (#{st}.thing_id = #{quoted_table_name}.#{quoted_primary_key} AND #{st}.thing_type = ?)", base_class.name]))
+          .select("DISTINCT #{quoted_table_name}.*")
       }
 
       scope :with_settings_for, lambda { |var|
-        joins("JOIN settings ON (settings.thing_id = #{table_name}.#{primary_key} AND
-                                 settings.thing_type = '#{base_class.name}') AND settings.var = '#{var}'")
+        st = RailsSettings::Settings.quoted_table_name
+        joins(sanitize_sql_array(["JOIN #{st} ON (#{st}.thing_id = #{quoted_table_name}.#{quoted_primary_key} AND #{st}.thing_type = ?) AND #{st}.var = ?", base_class.name, var]))
       }
 
       scope :without_settings, lambda {
-        joins("LEFT JOIN settings ON (settings.thing_id = #{table_name}.#{primary_key} AND
-                                      settings.thing_type = '#{base_class.name}')")
-          .where('settings.id IS NULL')
+        st = RailsSettings::Settings.quoted_table_name
+        joins(sanitize_sql_array(["LEFT JOIN #{st} ON (#{st}.thing_id = #{quoted_table_name}.#{quoted_primary_key} AND #{st}.thing_type = ?)", base_class.name]))
+          .where("#{st}.id IS NULL")
       }
 
       scope :without_settings_for, lambda { |var|
-        where('settings.id IS NULL')
-          .joins("LEFT JOIN settings ON (settings.thing_id = #{table_name}.#{primary_key} AND
-                                       settings.thing_type = '#{base_class.name}') AND settings.var = '#{var}'")
+        st = RailsSettings::Settings.quoted_table_name
+        where("#{st}.id IS NULL")
+          .joins(sanitize_sql_array(["LEFT JOIN #{st} ON (#{st}.thing_id = #{quoted_table_name}.#{quoted_primary_key} AND #{st}.thing_type = ?) AND #{st}.var = ?", base_class.name, var]))
       }
     end
 
