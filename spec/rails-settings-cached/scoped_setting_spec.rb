@@ -16,8 +16,13 @@ describe RailsSettings::ScopedSettings do
     expect(described_class.ancestors).to include(RailsSettings::Base)
   end
 
-  it 'is what record.settings returns (MEX specs stub the class)' do
-    expect(@partner_a.settings).to equal(described_class)
+  it 'returns a handle bound to the record, memoised per instance' do
+    handle = @partner_a.settings
+    expect(handle).to be_a(RailsSettings::Scope)
+    expect(handle.__scope_object__).to eq @partner_a
+    # Memoised, so a stub placed on `record.settings` is the handle the code under test uses.
+    expect(@partner_a.settings).to equal(handle)
+    expect(@partner_b.settings).not_to equal(handle)
   end
 
   describe 'scoping semantics' do
@@ -62,6 +67,19 @@ describe RailsSettings::ScopedSettings do
       @partner_a.settings.send('color=', 'red')
       expect(@partner_a.settings.send(:color, @partner_a)).to eq 'red'
       expect(@partner_a.settings.send(:color)).to eq 'red'
+    end
+
+    it 'reads the object passed to [], not the record the handle is bound to' do
+      @partner_a.settings.color = 'red'
+      @partner_b.settings.color = 'blue'
+      expect(@partner_a.settings[:color, @partner_b]).to eq 'blue'
+      expect(@partner_b.settings[:color, @partner_a]).to eq 'red'
+    end
+
+    it 'forwards a block through method_missing' do
+      ran = false
+      @partner_a.settings.transaction { ran = true }
+      expect(ran).to be true
     end
 
     it 'falls back to the nested default under the scope' do
@@ -124,13 +142,40 @@ describe RailsSettings::ScopedSettings do
   end
 
   describe 'lifecycle' do
-    it 'clears scope state when the Rails executor completes' do
-      Rails.application.executor.wrap do
-        @partner_a.settings
-        expect(described_class.send(:current_object)).to eq @partner_a
-      end
+    it 'leaves neither key bound once a call returns' do
+      # The handle binds only for the duration of each call, so nothing is left on the thread.
+      @partner_a.settings.color
       expect(described_class.send(:current_object)).to be_nil
       expect(described_class.send(:current_settings_scope)).to be_nil
+    end
+
+    it 'clears BOTH residual keys when the Rails executor completes' do
+      RailsSettings::ExecutionState[RailsSettings::ExecutionState::OBJECT_KEY] = @partner_a
+      RailsSettings::ExecutionState[RailsSettings::ExecutionState::SCOPE_KEY]  = 'partner'
+      Rails.application.executor.wrap { }
+      expect(described_class.send(:current_object)).to be_nil
+      expect(described_class.send(:current_settings_scope)).to be_nil
+    end
+
+    # The binding must not survive a raise, or a later unbound class-level read serves the leaked
+    # record instead of raising. App code that rescues a write error would run on a poisoned thread.
+    it 'unbinds even when the call raises' do
+      expect { @partner_a.settings.color = Object.new }.to raise_error(ArgumentError)
+      expect(described_class.send(:current_object)).to be_nil
+      expect(described_class.send(:current_settings_scope)).to be_nil
+      expect { described_class.color }.to raise_error(described_class::MissingScope)
+    end
+
+    it 'restores the exact previous binding when handles nest' do
+      @partner_b.settings.color = 'blue'
+      seen_o = seen_s = nil
+      @partner_a.settings.transaction do
+        @partner_b.settings.color
+        seen_o = described_class.send(:current_object)
+        seen_s = described_class.send(:current_settings_scope)
+      end
+      expect(seen_o).to eq @partner_a
+      expect(seen_s).to eq 'partner'
     end
 
     it 'raises MissingScope instead of reading anything when used without state' do

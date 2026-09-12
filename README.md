@@ -90,12 +90,18 @@ Setting.all('preferences.')
 
 Settings may be bound to any existing ActiveRecord object. Define this association like this:
 
-`record.settings` returns the `RailsSettings::ScopedSettings` class with the record bound for the
-current thread (or fiber, if `config.active_support.isolation_level = :fiber`). Chain the call --
-`user.settings.color` -- rather than holding the return value across another record's `settings`
-call on the same thread -- a held handle is silently rebound by the next `settings` call, so
-`s = a.settings; b.settings.x; s.y` reads and writes **b**, not a. The binding is cleared when the
-Rails executor completes the request or job; using it with no binding raises `MissingScope`.
+`record.settings` returns a `RailsSettings::Scope` bound to that record and memoised on it. The
+binding is re-established for the duration of each call, so a handle is safe to hold, to pass
+around, and to use from several threads:
+
+```ruby
+s = user.settings
+other.settings.whatever   # does not disturb s
+s.color                   # still user's
+```
+
+Passing the record again -- `user.settings.color(user)` -- is accepted but unnecessary; it
+addresses the same row and the same cache key.
 
 If the model defines `settings_scope` (e.g. returning `'partner'`), keys are stored as
 `partner.<key>` and defaults are looked up under that nesting in `config/app.yml`.

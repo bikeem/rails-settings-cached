@@ -50,7 +50,8 @@ module RailsSettings
 
       # destroy the specified settings record
       def destroy(var_name)
-        var_name = var_name.to_s
+        # Apply the scope the same way reads and writes do, or a scoped row can never be found.
+        var_name = respond_to?(:scoped_key) ? scoped_key(var_name.to_s) : var_name.to_s
         obj = object(var_name)
         raise SettingNotFound, "Setting variable \"#{var_name}\" not found" if obj.nil?
 

@@ -2,10 +2,12 @@ require 'spec_helper'
 
 describe 'RailsSettings::Extend scopes and get_all' do
   before(:all) do
-    Setting.unscoped.delete_all
-    @with    = User.create!(login: 'with',    password: 'x')
-    @without = User.create!(login: 'without', password: 'x')
-    @leak    = User.create!(login: 'leak',    password: 'x')
+    @with    = User.create!(login: "with-#{rand(10**9)}",    password: 'x')
+    @without = User.create!(login: "without-#{rand(10**9)}", password: 'x')
+    @leak    = User.create!(login: "leak-#{rand(10**9)}",    password: 'x')
+  end
+
+  before(:each) do
     @with.settings.color = 'red'
     @leak.settings.secret = 'classified'
   end

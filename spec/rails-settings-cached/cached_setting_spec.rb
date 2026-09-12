@@ -9,6 +9,7 @@ describe RailsSettings::CachedSettings do
     end
 
     it 'should work with instance method' do
+      Setting.some_key = 'v'
       obj = Setting.unscoped.first
       expect(obj.cache_key).to eq("rails_settings_cached/t123456/#{obj.var}")
     end
@@ -18,8 +19,9 @@ describe RailsSettings::CachedSettings do
     end
 
     it 'should work with class method and scoped object' do
-      obj = User.first
-      expect(Setting.cache_key('abc', obj)).to eql('rails_settings_cached/t123456/User-1/abc')
+      obj = User.first || User.create!(login: 'ck', password: 'x')
+      # Never a literal id: any spec that assigns an explicit id moves the sequence past it.
+      expect(Setting.cache_key('abc', obj)).to eql("rails_settings_cached/t123456/User-#{obj.id}/abc")
     end
   end
 
@@ -67,7 +69,8 @@ describe RailsSettings::CachedSettings do
     expect([first, rest]).to eq([1, 0])
   end
 
-  it 'caches unscoped settings' do
+  it 'keeps a value written inside a transaction after it commits' do
+    described_class['gender'] = 'female'
     expect(described_class['gender']).to eq('female')
     ActiveRecord::Base.transaction do
       described_class['gender'] = 'trans'

@@ -1,14 +1,14 @@
 require 'spec_helper'
 
 describe RailsSettings do
-  before(:all) do
+  before(:each) do
     @str = 'Foo bar'
     @tm = Time.now
     @items = [1, 3, 5, 'as']
     @hash = { name: @str, items: @items }
     @merged_hash = { name: @str, items: @items, id: 32 }
     @bar = 'Bar foo'
-    @user = User.create(login: 'test', password: 'foobar')
+    @user = User.create!(login: "test-#{rand(10**9)}", password: 'foobar')
   end
 
   describe "#thing" do
@@ -26,7 +26,7 @@ describe RailsSettings do
     end
 
     context 'Boolean value' do
-      before(:all) do
+      before(:each) do
         Setting.boolean_foo = true
         Setting.boolean_bar = false
       end
@@ -42,7 +42,7 @@ describe RailsSettings do
     end
 
     context 'Array value' do
-      before(:all) do
+      before(:each) do
         Setting.items = @items
       end
 
@@ -51,7 +51,7 @@ describe RailsSettings do
     end
 
     context 'DateTime value' do
-      before(:all) do
+      before(:each) do
         Setting.created_on = @tm
       end
       it { expect(Setting.created_on).to eq @tm }
@@ -59,7 +59,7 @@ describe RailsSettings do
     end
 
     context 'Hash value' do
-      before(:all) do
+      before(:each) do
         Setting.hashes = @hash
       end
       it { expect(Setting.hashes).to eq @hash }
@@ -67,7 +67,7 @@ describe RailsSettings do
     end
 
     context 'namespace for key' do
-      before(:all) do
+      before(:each) do
         Setting['config.color'] = :red
         Setting['config.limit'] = 100
       end
@@ -85,7 +85,8 @@ describe RailsSettings do
     end
 
     context 'Merge hash' do
-      before(:all) do
+      before(:each) do
+        Setting.hashes = @hash
         Setting.merge!(:hashes, id: 32)
       end
       it { expect(Setting.hashes).to include(id: 32) }
@@ -94,8 +95,13 @@ describe RailsSettings do
   end
 
   describe '#all' do
-    it 'should work' do
-      expect(Setting.all.count).to eq 8
+    it 'returns every row it was given, scoped and global alike' do
+      3.times { |i| Setting.send("all_k#{i}=", i) }
+      @user.settings.scoped_one = 'x'
+
+      # `all` is plain ActiveRecord: the whole table. `thing_scoped` is the global-only relation.
+      expect(Setting.all.map(&:var)).to match_array(%w[all_k0 all_k1 all_k2 scoped_one])
+      expect(Setting.thing_scoped.map(&:var)).to match_array(%w[all_k0 all_k1 all_k2])
     end
   end
 
@@ -111,6 +117,8 @@ describe RailsSettings do
     end
 
     it "should all('namespace')" do
+      Setting['config.color'] = :red
+      Setting['config.limit'] = 100
       expect(Setting.get_all('config')).to eq({ "config.color" => :red, "config.limit" => 100 })
       expect(Setting.get_all('config').count).to eq 2
     end
@@ -122,12 +130,14 @@ describe RailsSettings do
   end
 
   describe '#destroy' do
-    before(:all) do
+    before(:each) do
+      Setting.foo = @str
+      Setting.other_key = 'kept'
       Setting.destroy(:foo)
     end
 
     it { expect(Setting.foo).to be_nil }
-    it { expect(Setting.all.count).to eq 8 }
+    it { expect(Setting.all.map(&:var)).to eq ['other_key'] }
 
     it 'can destroy a falsy value' do
       Setting.falsy_value = false
@@ -148,10 +158,13 @@ describe RailsSettings do
   end
 
   describe 'Implementation by embeds a Model' do
-    it 'can set values' do
+    before(:each) do
       @user.settings.level = 30
       @user.settings.locked = true
       @user.settings.last_logined_at = @tm
+    end
+
+    it 'can set values' do
       Setting.level = 20
       expect(Setting.unscoped.where(var: 'level').count).to eq 2
       expect(Setting.where(var: 'level').count).to eq 1
@@ -171,14 +184,16 @@ describe RailsSettings do
         expect(Setting.unscoped).to be_a(ActiveRecord::Relation)
       end
 
-      it 'should get items more than 8' do
+      it 'counts scoped and global rows together' do
         Setting.aa = Time.now
-        expect(Setting.unscoped.count).to be > 8
+        @user.settings.bb = Time.now
+        expect(Setting.unscoped.count).to eq 2
+        expect(Setting.thing_scoped.count).to eq 1   # thing_scoped is the global-only relation
       end
     end
 
     describe '#find' do
-      let(:obj) { Setting.unscoped.first }
+      let(:obj) { Setting.foo = 'x'; Setting.unscoped.first }
       let(:id) { obj.id }
 
       it 'should work with find' do

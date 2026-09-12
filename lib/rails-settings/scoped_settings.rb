@@ -8,12 +8,10 @@ module RailsSettings
     class MissingScope < StandardError; end
 
     class << self
-      # Scope state is per thread (or per fiber when the app sets
-      # config.active_support.isolation_level = :fiber), never a class ivar.
+      # Returns a handle bound to this record. The binding is re-established per call by the
+      # handle itself, so it cannot be clobbered by another record or another thread.
       def for_thing(object, settings_scope)
-        ExecutionState[ExecutionState::OBJECT_KEY] = object
-        ExecutionState[ExecutionState::SCOPE_KEY]  = settings_scope
-        self
+        RailsSettings::Scope.new(object, settings_scope, self)
       end
 
       # Drops everything, the transaction memo included: it pins an ActiveRecord::Transaction and

@@ -42,6 +42,23 @@ data migration or cache flush is needed.
 - Storing a value whose class the decoder will refuse now raises `ArgumentError` at the call site
   instead of poisoning the row -- an undecodable row broke `get_all` for everyone, permanently.
 - An idempotent save no longer evicts the cache entry.
+- `cache_prefix_by_startup` is memoised on `RailsSettings::Base` rather than per subclass. It is a
+  digest of the defaults file, which is global; per-class memoisation let `Setting` and
+  `ScopedSettings` compute different prefixes and therefore different keys for the same row.
+- `settings.destroy(key)` applies the record's settings_scope, so a scoped row can be found at all.
+
+- **`record.settings` returns a handle bound to that record**, memoised on it, instead of the
+  `ScopedSettings` class with a per-thread binding. A handle held across another record's
+  `settings` call used to be silently rebound to that record, so `s = a.settings; b.settings.x;
+  s.y` read `b`. Reads and writes through a held handle are now always the record's own, and
+  passing the record a second time (`record.settings.key(record)`) is no longer necessary.
+
+  Consequences for host applications: `record.settings` is a `RailsSettings::Scope`, not a class,
+  so `allow(record.settings).to receive(...)` stubs that handle (memoisation makes it the same
+  object the code under test uses). Stubs placed on the `RailsSettings::ScopedSettings` class
+  still apply, because the handle delegates to it. `ScopedSettings.for_thing` is now called once
+  per record instance rather than on every `settings` call, so a test counting those calls will
+  see fewer.
 
 ### Added
 

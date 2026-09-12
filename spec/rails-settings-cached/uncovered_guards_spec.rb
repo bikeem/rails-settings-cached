@@ -270,12 +270,17 @@ describe 'guards not previously covered' do
 
   # ---------- B38: an explicit object outranks the thread settings_scope ----------
   describe '.scoped_key precedence' do
-    it 'lets an explicit object override the thread settings_scope' do
+    it 'lets an explicit object override the record settings_scope' do
       acct = Account.create!(code: 'prec')
-      acct.settings                                    # settings_scope 'acct' is now on this thread
 
-      expect(RailsSettings::ScopedSettings.scoped_key('color', acct)).to eq 'account.color'
-      expect(RailsSettings::ScopedSettings.scoped_key('color')).to eq 'acct.color'
+      # No object passed: the record's settings_scope wins.
+      acct.settings.color = 'from-scope'
+      expect(Setting.unscoped.find_by(thing_type: 'Account', thing_id: acct.id).var).to eq 'acct.color'
+
+      # Object passed: base_class.downcase wins instead, addressing a different row.
+      acct.settings[:color, 'from-object'] = acct
+      vars = Setting.unscoped.where(thing_type: 'Account', thing_id: acct.id).pluck(:var)
+      expect(vars).to match_array(%w[acct.color account.color])
     end
   end
 

@@ -100,9 +100,21 @@ ActiveRecord::Schema.define(version: 1) do
 end
 
 RSpec.configure do |config|
-  # Scope state is per thread and survives an example; without this a later example asserting
-  # MissingScope would silently depend on run order.
-  config.before(:each) { RailsSettings::ScopedSettings.clear_current! }
+  # Everything an example could inherit from another is reset here rather than once per group.
+  # Per-group cleanup left the suite order-dependent: examples shared rows through before(:all)
+  # and asserted absolute counts, so --order random failed.
+  config.before(:each) do
+    RailsSettings::ScopedSettings.clear_current!
+    ActiveRecord::Base.connection.execute('delete from settings')
+    Rails.cache.clear
+    # cache_prefix lives on RailsSettings::Base so every subclass shares it; without this an
+    # example that sets one changes the cache keys of every example that runs after it.
+    RailsSettings::Base.instance_variable_set(:@cache_prefix, nil)
+    # Recomputed per example: a spec that stubs Default.instance would otherwise bake a digest
+    # from the stub into every key for the rest of the run.
+    RailsSettings::Base.send(:remove_instance_variable, :@cache_prefix_by_startup) if
+      RailsSettings::Base.instance_variable_defined?(:@cache_prefix_by_startup)
+  end
 
   config.before(:all) do
     class Setting < RailsSettings::Base
@@ -140,8 +152,6 @@ RSpec.configure do |config|
       end
     end
 
-    ActiveRecord::Base.connection.execute('delete from settings')
-    Rails.cache.clear
   end
 
   config.after(:all) do

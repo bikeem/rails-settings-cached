@@ -12,9 +12,10 @@ describe 'RailsSettings::Base guards that survived mutation testing' do
     done = Queue.new
     t = Thread.new do
       ActiveRecord::Base.connection_pool.with_connection { @cand_partner.settings.color }
-      done << true
+    ensure
+      done << true   # in the ensure, so a raise cannot deadlock the pop below
     end
-    done.pop
+    Timeout.timeout(10) { done.pop }
     t.join(5)
   end
 
@@ -104,12 +105,18 @@ describe 'RailsSettings::Base guards that survived mutation testing' do
   end
 
   it 'caps the memo so an unbounded key loop cannot grow it without limit' do
-    limit = RailsSettings::Base::TRANSACTION_MEMO_LIMIT
+    # stub_const rather than the real bound: reading the same constant the code reads makes the
+    # assertion unfalsifiable, and looping a million times took minutes.
+    stub_const('RailsSettings::Base::TRANSACTION_MEMO_LIMIT', 5)
     ActiveRecord::Base.transaction do
-      (limit + 2).times { |i| @cand_partner.settings.send("cap_k#{i}") }
+      7.times { |i| @cand_partner.settings.send("cap_k#{i}") }
       memo = RailsSettings::ExecutionState[RailsSettings::ExecutionState::MEMO_KEY].last
-      expect(memo.size).to be <= limit
+      expect(memo.size).to be <= 5
     end
+  end
+
+  it 'pins the documented memo bound' do
+    expect(RailsSettings::Base::TRANSACTION_MEMO_LIMIT).to eq 1_000
   end
 
   it 'addresses an STI record under its base class' do
@@ -249,8 +256,18 @@ describe 'RailsSettings::Base guards that survived mutation testing' do
       end
     end
 
-    it 'releases the mark once the transaction settles' do
+    it 'releases the mark once the transaction commits' do
       ActiveRecord::Base.transaction { @cand_partner.settings.color = 'x' }
+      expect(RailsSettings::ExecutionState[RailsSettings::ExecutionState::DIRTY_KEY].to_a).to eq []
+    end
+
+    it 'releases the mark when the transaction ROLLS BACK' do
+      # Otherwise the key stays marked for the rest of the request and every read of it bypasses
+      # the shared cache.
+      ActiveRecord::Base.transaction do
+        @cand_partner.settings.color = 'rolled-back'
+        raise ActiveRecord::Rollback
+      end
       expect(RailsSettings::ExecutionState[RailsSettings::ExecutionState::DIRTY_KEY].to_a).to eq []
     end
   end
